@@ -1,137 +1,181 @@
+import yaml
+import pathlib
 import numpy as np
-from scipy.optimize import bisect, root
+from scipy.optimize import bisect
+from scipy.interpolate import interp1d, interp2d
 
-# --------------------------------- PARAMETERS ---------------------------------
-J_max = 7.2
-K_m = 5
-p_L = 0.9
-p_TCA = 1
-J_O2_0 = 16
-A_tot = 4000
-ag_K_ATP = 54
-g_s_2 = 0.22
-g_K_ATP_ms = 0.27
-n_s = 10
-RGS_0 = 0.03
-
-# Grubelnik et al 2020
-k_ATPase = 135
-K_m_ATPase = 2000
-
-# cAMP
-a_ATPase = 0
-b_ATPase = 0.025
+PARACRINE = 0.23
+INTRINSIC = 1-PARACRINE
 
 
-alpha_CO2 = 0.0308
-pKa = 6.1
+class Cell(object):
+    def __init__(self, type):
+        data = pathlib.Path(__file__).parent.parent / "data/parameters.yaml"
+        with open(data, "r") as stream:
+            try:
+                par = yaml.safe_load(stream)[type]
+            except yaml.YAMLError as exc:
+                print(exc)
+        self.par = par
 
-CO2_bas = 40*0.0308*1e-3
-H_bas = 10**(-7.4)
-HCO3_bas = CO2_bas*10**(-np.log10(H_bas) - pKa)
+    # GLYCOLYSIS
+    def J_G6P(self, G):
+        J_max, K_m = self.par["J_max"], self.par["K_m"]
+        return J_max * G**2 / (K_m**2 + G**2)
 
-Ka = 10**(-pKa)
-k_HCO3_PM = 1
-k_H_PM = 1e6
-k_CO2_PM = 1e3
+    def J_ATP_gly(self, G):
+        return 2*self.J_G6P(G)
 
-Km_sAC = 11
-Km_PDE3B = 0.4
-Km_PDE4 = 4.4
+    def J_NADH_gly(self, G):
+        return 2*self.J_G6P(G)
 
-r_sAC = 1.0
-r_PDE3B = 0.5
-r_PDE4 = 0.5
+    def J_pyr(self, G):
+        return 2*self.J_G6P(G)
 
-# ---------------------------- METABOLIC FUNCTIONS -----------------------------
+    def J_ATP_NADH_gly(self, G):
+        p_L = self.par["p_L"]
+        return 1.5*(self.J_NADH_gly(G)-p_L*self.J_pyr(G))
 
-# GLYCOLYSIS
-J_G6P = lambda G: J_max * G**2 / (K_m**2 + G**2)
-J_ATP_Gly = lambda G: 2*J_G6P(G)
-J_NADH_Gly = lambda G: 2*J_G6P(G)
-J_pyr = lambda G: 2*J_G6P(G)
-J_ATP_NADH_Gly = lambda G: 1.5*(J_NADH_Gly(G)-p_L*J_pyr(G))
+    # TCA CYCLE
+    def J_NADH_pyr(self, G):
+        p_L, p_TCA = self.par["p_L"], self.par["p_TCA"]
+        return 5*p_TCA*(1-p_L)*self.J_pyr(G)
 
-# TCA CYCLE
-J_NADH_pyr = lambda G: 5*p_TCA*(1-p_L)*J_pyr(G)
-J_ATP_NADH_pyr = lambda G: 2.5*J_NADH_pyr(G)
+    def J_ATP_NADH_pyr(self, G):
+        return 2.5*self.J_NADH_pyr(G)
 
-# OXYGEN INPUT
-J_O2_G = lambda G: 0.5*(J_NADH_pyr(G)+J_NADH_Gly(G)-p_L*J_pyr(G))
-J_O2 = lambda G: -0.2*J_G6P(G) + J_O2_0
+    # OXYGEN INPUT
+    def J_O2_G(self, G):
+        p_L = self.par["p_L"]
+        return 0.5*(self.J_NADH_pyr(G)+self.J_NADH_gly(G)-p_L*self.J_pyr(G))
 
-# BETA-OXIDATION
-J_NADH_FFA = lambda G: 2*(J_O2(G)-J_O2_G(G))
-J_ATP_NADH_FFA = lambda G: 2.3*J_NADH_FFA(G)
+    def J_O2(self, G):
+        J_O2_0, k_O2 = self.par["J_O2_0"], self.par["k_O2"]
+        alpha = k_O2*self.J_G6P(G) + J_O2_0
 
-# ATP INPUT
-J_ATP = lambda G: J_ATP_Gly(G) + J_ATP_NADH_Gly(G) + J_ATP_NADH_pyr(G) + J_ATP_NADH_FFA(G)
+        J_O2_1, K_m_O2 = self.par["J_O2_1"], self.par["K_m_O2"]
+        n_O2 = self.par["n_O2"]
+        beta = J_O2_1*self.J_G6P(G)**n_O2/(K_m_O2**n_O2+self.J_G6P(G)**n_O2)
+        return alpha + beta
 
-# ATP OUTPUT
-J_ATPase = lambda ATP: b_ATPase*ATP + a_ATPase
+    # BETA-OXIDATION
+    def J_NADH_FFA(self, G):
+        return 2*(self.J_O2(G)-self.J_O2_G(G))
 
-# AXP CONCENTRATIONS
-ATP = lambda G: (J_ATP(G)-a_ATPase)/b_ATPase
-ADP = lambda G: A_tot - ATP(G)
-RAT = lambda G: ATP(G)/ADP(G)
+    def J_ATP_NADH_FFA(self, G):
+        return 2.3*self.J_NADH_FFA(G)  # !spremenjeno iz 2.5!
 
-# K(ATP) CHANNELS
-# g_K_RAT = lambda RAT: 0.56*np.exp(-0.25*RAT)
+    # OXIDATIVE ATP PRODUCTION
+    def J_ATP_ox(self, G):
+        return self.J_ATP_NADH_gly(G) + self.J_ATP_NADH_pyr(G) + self.J_ATP_NADH_FFA(G)
 
-def f(x):
-    A, B = x
-    return [A*np.exp(-B*RAT(1))+0.19-0.27, A*np.exp(-B*RAT(6))+0.19-0.2]
-from scipy.optimize import root
-res = root(f, [0, 0]).x
+    # ATP PRODUCTION/HYDROLYSIS
+    def J_ATP(self, G):
+        return self.J_ATP_gly(G) + self.J_ATP_ox(G)
 
-g_K_RAT = lambda RAT: res[0]*np.exp(-res[1]*RAT)+0.19
+    def J_ATPase(self, ATP):
+        k_ATPase, K_m_ATPase = self.par["k_ATPase"], self.par["K_m_ATPase"]
+        return k_ATPase*ATP/(K_m_ATPase + ATP)
 
-def glucose(gkatp):
-    f = lambda g: g_K_RAT(RAT(g))-gkatp
-    return bisect(f, 0, 100)
+    # AXP CONCENTRATIONS
+    def ATP(self, G):
+        k_ATPase, K_m_ATPase = self.par["k_ATPase"], self.par["K_m_ATPase"]
+        return K_m_ATPase*self.J_ATP(G)/(k_ATPase-self.J_ATP(G))
 
-# CO2 OUTPUT
-J_CO2 = lambda G: 3*p_TCA*(1-p_L)*J_pyr(G) + 0.7/2*J_NADH_FFA(G)
-# Lactate output
-J_lac = lambda G: p_L*J_pyr(G)
+    def ADP(self, G):
+        A_tot = self.par["A_tot"]
+        return A_tot - self.ATP(G)
 
-# ---------------------- BICARBONATE BUFFER FUNCTIONS --------------------------
+    def RAT(self, G):
+        return self.ATP(G)/self.ADP(G)
 
-J_H_PM = lambda k_H, H_in: k_H*(H_in-H_bas)
-J_CO2_PM = lambda k_CO2, CO2_in: k_CO2*(CO2_in-CO2_bas)
-J_HCO3_PM = lambda k_HCO3, HCO3_in: k_HCO3*(HCO3_bas-HCO3_in)
+    # KATP CHANNEL CONDUCTANCE
+    def g_K_ATP(self, G):
+        ag_K_ATP = self.par["ag_K_ATP"]
+        MgADP = 0.165*self.ADP(G)
+        ADP3 = 0.135*self.ADP(G)
+        ATP4 = 0.05*self.ATP(G)
 
-def equations(G, const, p):
-    HCO3_in, H_in, CO2_in, J_IC = p
-    k_H, k_CO2, k_HCO3 = const
-    return [
-        J_lac(G) - J_H_PM(k_H, H_in) - J_IC,
-        J_CO2(G) - J_CO2_PM(k_CO2, CO2_in) + J_IC,
-        J_HCO3_PM(k_HCO3, HCO3_in) - J_IC,
-        10**(-pKa) - H_in*HCO3_in/CO2_in
-    ]
+        up = 0.08*(1+2*MgADP/17)+0.89*(MgADP/17)**2
+        down = (1+MgADP/17)**2*(1+ADP3/26+ATP4/1)
+        return ag_K_ATP*up/down
 
-def intracellular_concentrations(G, const):
-    return root(lambda a: equations(G, const, a), [HCO3_bas, H_bas, CO2_bas, 0], method="lm").x
+    def g_K_ATP_vec(self):
+        return np.vectorize(self.g_K_ATP)
 
-pars = (k_HCO3_PM, k_H_PM, k_CO2_PM)
-HCO3_in = lambda G: intracellular_concentrations(G, pars)[0]*1000  # mM
-H_in = lambda G: intracellular_concentrations(G, pars)[1]  # M
-CO2_in = lambda G: intracellular_concentrations(G, pars)[2]*1000  # mM
+    # Get glucose from gKATP
+    def glucose(self, gkatp):
+        f = lambda g: self.g_K_ATP(g)-gkatp
+        return bisect(f, 0, 100)
 
-# ------------------------------- cAMP FUNCTIONS -------------------------------
+    def glucose_vec(self, G):
+        return np.vectorize(self.glucose)(G)
 
-J_sAC = lambda HCO3, r_sAC: r_sAC*HCO3/(HCO3+Km_sAC)
-J_PDE = lambda cAMP, r_PDE3B, r_PDE4: r_PDE3B*cAMP/(cAMP+Km_PDE3B) + r_PDE4*cAMP/(cAMP+Km_PDE4)
+    # -------------------------- HORMONE SECRETION -------------------------- #
+    def f_RS(self, gKATP):
+        g_s_2, n_s = self.par["g_s_2"], self.par["n_s"]
+        return (g_s_2**n_s)/(g_s_2**n_s + gKATP**n_s)
 
-def cAMP(hco3):
-    f = lambda camp: J_sAC(hco3, r_sAC)-J_PDE(camp, r_PDE3B, r_PDE4)
-    return bisect(f, 0, 100)
-
-fcAMP = lambda G: (cAMP(HCO3_in(G)) - cAMP(HCO3_in(20)))/(cAMP(HCO3_in(0))-cAMP(HCO3_in(20)))
+    def RS(self, gKATP):
+        RS_0, g_K_ATP_ms = self.par["RS_0"], self.par["g_K_ATP_ms"]
+        return (1 - RS_0)*self.f_RS(gKATP)/self.f_RS(g_K_ATP_ms) + RS_0
 
 
-# ---------------------------- GLUCAGON SECRETION ------------------------------
+class Beta(Cell):
+    def __init__(self):
+        super(Beta, self).__init__("beta")
 
-f_RGS = lambda g_K_ATP: g_K_ATP**n_s/(g_s_2**n_s + g_K_ATP**n_s)
-RGS = lambda g_K_ATP: (1-RGS_0)*f_RGS(g_K_ATP)/f_RGS(g_K_ATP_ms)+RGS_0
+
+class Alpha(Cell):
+    def __init__(self):
+        super(Alpha, self).__init__("alpha")
+        camp_data = pathlib.Path(__file__).parent.parent / "data/camp.txt"
+        mesh_data = pathlib.Path(__file__).parent.parent / "data/RGS_mesh.txt"
+        self.cAMP_data = np.loadtxt(camp_data).T
+        self.mesh_data = np.loadtxt(mesh_data).T
+
+    # --------------------------------- cAMP -------------------------------- #
+    def cAMP_interpolation(self, gKATP):
+        return interp1d(*self.cAMP_data)(gKATP)
+
+    def cAMP_fit(self, G):
+        cAMP_0 = 4
+        cAMP_p = 4
+        fcAMP = 0.6
+        nc = 2
+        return cAMP_0*(1-fcAMP*(G**nc/(cAMP_p**nc+G**nc)))
+
+    # ------------------------------- secretion ----------------------------- #
+    def mesh_interpolation(self, gKATP, cAMP):
+        return interp2d(*self.mesh_data)(gKATP, cAMP)
+
+    # KATP-dependent RGS
+    def RGS_KATP(self, gKATP):
+        Gkatp_05_GLUC = 0.23  # 0.22
+        Gkatp_max = 0.27
+        n_gs = 1.3  # 10
+        norm_gluc = Gkatp_max**n_gs/(Gkatp_max**n_gs+Gkatp_05_GLUC**n_gs)
+        p_gluc0 = 0.03
+
+        return (1-p_gluc0)*gKATP**n_gs/(gKATP**n_gs+Gkatp_05_GLUC**n_gs)/norm_gluc+p_gluc0
+
+    def RGS_cAMP(self, cAMP):
+        cAMP_0 = 4
+        return cAMP/cAMP_0
+
+    def RGS_Ca(self, G):
+        Ca_max = 0.1
+        G_05 = 12
+        return Ca_max/(1 + np.exp(-(G-G_05)))
+
+    def RGS_intrinsic(self, G, gKATP, cAMP):
+        return self.RGS_KATP(gKATP)*self.RGS_cAMP(cAMP)+self.RGS_Ca(G)
+
+    def RGS_paracrine(self, G):
+        beta = Beta()
+        beta_gKATP = beta.g_K_ATP(G)
+        RIS = beta.RS(beta_gKATP)
+        return 1-RIS
+
+    def RGS(self, G, gKATP, cAMP):
+        return INTRINSIC*self.RGS_intrinsic(G, gKATP, cAMP)+PARACRINE*self.RGS_paracrine(G)

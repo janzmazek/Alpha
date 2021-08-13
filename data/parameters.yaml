@@ -1,0 +1,36 @@
+alpha:
+  J_max: 7.2
+  K_m: 2.5
+  p_L: 0.9
+  p_TCA: 1
+  J_O2_0: 16
+  J_O2_1: 0
+  n_O2: 1 # neuporabljeno
+  K_m_O2: 1 # neuporabljeno
+  k_O2: -0.2
+  A_tot: 4000
+  ag_K_ATP: 54
+  k_ATPase: 175  # !spremenjeno iz 135!
+  K_m_ATPase: 4000  # !spremenjeno iz 2000!
+  g_s_2: 0.22
+  g_K_ATP_ms: 0.27
+  n_s: 10
+  RS_0: 0.03
+beta:
+  J_max: 8
+  K_m: 3.8
+  p_L: 0.05
+  p_TCA: 0.4
+  J_O2_0: 6
+  J_O2_1: 50
+  n_O2: 1.5
+  K_m_O2: 12
+  k_O2: 0
+  A_tot: 4000
+  ag_K_ATP: 70
+  k_ATPase: 180 
+  K_m_ATPase: 2000
+  g_s_2: 0.36
+  g_K_ATP_ms: 0
+  n_s: 4
+  RS_0: 0.03
