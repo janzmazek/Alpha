@@ -2,7 +2,7 @@ import yaml
 import pathlib
 import numpy as np
 from scipy.optimize import bisect
-from scipy.interpolate import interp1d, interp2d
+from scipy.interpolate import interp1d, interp2d, griddata, Rbf
 
 PARACRINE = 0.23
 INTRINSIC = 1-PARACRINE
@@ -17,6 +17,7 @@ class Cell(object):
             except yaml.YAMLError as exc:
                 print(exc)
         self.par = par
+        self.mitos = 1
 
     # GLYCOLYSIS
     def J_G6P(self, G):
@@ -67,7 +68,10 @@ class Cell(object):
 
     # OXIDATIVE ATP PRODUCTION
     def J_ATP_ox(self, G):
-        return self.J_ATP_NADH_gly(G) + self.J_ATP_NADH_pyr(G) + self.J_ATP_NADH_FFA(G)
+        sum = self.J_ATP_NADH_gly(G)
+        sum += self.J_ATP_NADH_pyr(G)
+        sum += self.J_ATP_NADH_FFA(G)
+        return self.mitos*sum
 
     # ATP PRODUCTION/HYDROLYSIS
     def J_ATP(self, G):
@@ -129,53 +133,64 @@ class Beta(Cell):
 class Alpha(Cell):
     def __init__(self):
         super(Alpha, self).__init__("alpha")
+        self.beta_mitos = 1
         camp_data = pathlib.Path(__file__).parent.parent / "data/camp.txt"
-        mesh_data = pathlib.Path(__file__).parent.parent / "data/RGS_mesh.txt"
+        mesh_data = pathlib.Path(__file__).parent.parent / "data/mesh.txt"
         self.cAMP_data = np.loadtxt(camp_data).T
+        norm = self.cAMP_data[1]
+        norm = (norm-np.min(norm))/(np.max(norm)-np.min(norm))
+        self.cAMP_data[1] = norm
         self.mesh_data = np.loadtxt(mesh_data).T
+        self.mesh_data[2] /= np.max(self.mesh_data[2])
 
     # --------------------------------- cAMP -------------------------------- #
     def cAMP_interpolation(self, gKATP):
         return interp1d(*self.cAMP_data)(gKATP)
 
-    def cAMP_fit(self, G):
-        cAMP_0 = 4
-        cAMP_p = 4
-        fcAMP = 0.6
-        nc = 2
-        return cAMP_0*(1-fcAMP*(G**nc/(cAMP_p**nc+G**nc)))
+    # def cAMP_fit(self, G):
+    #     cAMP_0 = 4
+    #     cAMP_p = 4
+    #     fcAMP = 0.6
+    #     nc = 2
+    #     return cAMP_0*(1-fcAMP*(G**nc/(cAMP_p**nc+G**nc)))
 
     # ------------------------------- secretion ----------------------------- #
-    def mesh_interpolation(self, gKATP, cAMP):
-        return interp2d(*self.mesh_data)(gKATP, cAMP)
+    def mesh_interpolation(self, gKATP, fcAMP):
+        x, y, z = self.mesh_data
+        sparse_points = np.stack([x, y], -1)
+        result = griddata(sparse_points, z, (gKATP, fcAMP))
+        return result
 
-    # KATP-dependent RGS
-    def RGS_KATP(self, gKATP):
-        Gkatp_05_GLUC = 0.23  # 0.22
-        Gkatp_max = 0.27
-        n_gs = 1.3  # 10
-        norm_gluc = Gkatp_max**n_gs/(Gkatp_max**n_gs+Gkatp_05_GLUC**n_gs)
-        p_gluc0 = 0.03
+        # return griddata(*self.mesh_data)(gKATP, fcAMP)
 
-        return (1-p_gluc0)*gKATP**n_gs/(gKATP**n_gs+Gkatp_05_GLUC**n_gs)/norm_gluc+p_gluc0
+    #KATP-dependent RGS
+    # def RGS_KATP(self, gKATP):
+    #     Gkatp_05_GLUC = 0.23  # 0.22
+    #     Gkatp_max = 0.27
+    #     n_gs = 1.3  # 10
+    #     norm_gluc = Gkatp_max**n_gs/(Gkatp_max**n_gs+Gkatp_05_GLUC**n_gs)
+    #     p_gluc0 = 0.03
 
-    def RGS_cAMP(self, cAMP):
-        cAMP_0 = 4
-        return cAMP/cAMP_0
+    #     return (1-p_gluc0)*gKATP**n_gs/(gKATP**n_gs+Gkatp_05_GLUC**n_gs)/norm_gluc+p_gluc0
+
+    # def RGS_cAMP(self, cAMP):
+    #     cAMP_0 = 4
+    #     return cAMP/cAMP_0
 
     def RGS_Ca(self, G):
-        Ca_max = 0.1
-        G_05 = 12
-        return Ca_max/(1 + np.exp(-(G-G_05)))
+        Ca_max = 0.12
+        G_05 = 17
+        return Ca_max/(1 + np.exp(-0.3*(G-G_05)))
 
-    def RGS_intrinsic(self, G, gKATP, cAMP):
-        return self.RGS_KATP(gKATP)*self.RGS_cAMP(cAMP)+self.RGS_Ca(G)
+    def RGS_intrinsic(self, gKATP, fcAMP):
+        return self.mesh_interpolation(gKATP, fcAMP)#+self.RGS_Ca(G)
 
     def RGS_paracrine(self, G):
         beta = Beta()
+        beta.mitos = self.beta_mitos
         beta_gKATP = beta.g_K_ATP(G)
         RIS = beta.RS(beta_gKATP)
         return 1-RIS
 
     def RGS(self, G, gKATP, cAMP):
-        return INTRINSIC*self.RGS_intrinsic(G, gKATP, cAMP)+PARACRINE*self.RGS_paracrine(G)
+        return INTRINSIC*self.RGS_intrinsic(gKATP, cAMP)+PARACRINE*self.RGS_paracrine(G)
