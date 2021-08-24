@@ -10,7 +10,7 @@ INTRINSIC = 1-PARACRINE
 
 class Cell(object):
     def __init__(self, type):
-        data = pathlib.Path(__file__).parent.parent / "data/parameters.yaml"
+        data = pathlib.Path(__file__).parent / "parameters.yaml"
         with open(data, "r") as stream:
             try:
                 par = yaml.safe_load(stream)[type]
@@ -134,8 +134,8 @@ class Alpha(Cell):
     def __init__(self):
         super(Alpha, self).__init__("alpha")
         self.beta_mitos = 1
-        camp_data = pathlib.Path(__file__).parent.parent / "data/camp.txt"
-        mesh_data = pathlib.Path(__file__).parent.parent / "data/mesh.txt"
+        camp_data = pathlib.Path(__file__).parent / "camp.txt"
+        mesh_data = pathlib.Path(__file__).parent / "mesh.txt"
         self.cAMP_data = np.loadtxt(camp_data).T
         norm = self.cAMP_data[1]
         norm = (norm-np.min(norm))/(np.max(norm)-np.min(norm))
@@ -156,6 +156,8 @@ class Alpha(Cell):
 
     # ------------------------------- secretion ----------------------------- #
     def mesh_interpolation(self, gKATP, fcAMP):
+        assert np.array(gKATP >= 0).all()  and np.array(gKATP <= 0.4).all()
+        assert np.array(fcAMP >= 0).all() and np.array(fcAMP <= 1).all()
         x, y, z = self.mesh_data
         sparse_points = np.stack([x, y], -1)
         result = griddata(sparse_points, z, (gKATP, fcAMP))
