@@ -110,10 +110,19 @@ class Cell(object):
     # Get glucose from gKATP
     def glucose(self, gkatp):
         f = lambda g: self.g_K_ATP(g)-gkatp
-        return bisect(f, 0, 100)
+        try: 
+            result = bisect(f, 0, 100)
+        except ValueError as e:
+            if str(e) != "f(a) and f(b) must have different signs":
+                raise ValueError(e)
+            if gkatp > self.g_K_ATP(0):
+                result = np.nan
+            else:
+                result = np.inf
+        return result
 
-    def glucose_vec(self, G):
-        return np.vectorize(self.glucose)(G)
+    def glucose_vec(self, gKATP):
+        return np.vectorize(self.glucose)(gKATP)
 
     # -------------------------- HORMONE SECRETION -------------------------- #
     def f_RS(self, gKATP):
@@ -147,13 +156,6 @@ class Alpha(Cell):
     def cAMP_interpolation(self, gKATP):
         return interp1d(*self.cAMP_data)(gKATP)
 
-    # def cAMP_fit(self, G):
-    #     cAMP_0 = 4
-    #     cAMP_p = 4
-    #     fcAMP = 0.6
-    #     nc = 2
-    #     return cAMP_0*(1-fcAMP*(G**nc/(cAMP_p**nc+G**nc)))
-
     # ------------------------------- secretion ----------------------------- #
     def mesh_interpolation(self, gKATP, fcAMP):
         assert np.array(gKATP >= 0).all()  and np.array(gKATP <= 0.4).all()
@@ -163,29 +165,26 @@ class Alpha(Cell):
         result = griddata(sparse_points, z, (gKATP, fcAMP))
         return result
 
-        # return griddata(*self.mesh_data)(gKATP, fcAMP)
+    def RGS_Ca(self, gKATP):
+        before = self.mitos
+        self.mitos = 1
+        G = self.glucose_vec(gKATP)
+        self.mitos = before
 
-    #KATP-dependent RGS
-    # def RGS_KATP(self, gKATP):
-    #     Gkatp_05_GLUC = 0.23  # 0.22
-    #     Gkatp_max = 0.27
-    #     n_gs = 1.3  # 10
-    #     norm_gluc = Gkatp_max**n_gs/(Gkatp_max**n_gs+Gkatp_05_GLUC**n_gs)
-    #     p_gluc0 = 0.03
+        # if G == None:
+        #     return 0 
 
-    #     return (1-p_gluc0)*gKATP**n_gs/(gKATP**n_gs+Gkatp_05_GLUC**n_gs)/norm_gluc+p_gluc0
+        G = np.nan_to_num(G)
 
-    # def RGS_cAMP(self, cAMP):
-    #     cAMP_0 = 4
-    #     return cAMP/cAMP_0
-
-    def RGS_Ca(self, G):
         Ca_max = 0.12
         G_05 = 17
         return Ca_max/(1 + np.exp(-0.3*(G-G_05)))
 
+    def RGS_Ca_vec(self, gKATP):
+        return np.vectorize(self.RGS_Ca)(gKATP)
+
     def RGS_intrinsic(self, gKATP, fcAMP):
-        return self.mesh_interpolation(gKATP, fcAMP)#+self.RGS_Ca(G)
+        return self.mesh_interpolation(gKATP, fcAMP)+self.RGS_Ca_vec(gKATP)
 
     def RGS_paracrine(self, G):
         beta = Beta()
