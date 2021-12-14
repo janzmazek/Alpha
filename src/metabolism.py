@@ -110,7 +110,7 @@ class Cell(object):
     # Get glucose from gKATP
     def glucose(self, gkatp):
         f = lambda g: self.g_K_ATP(g)-gkatp
-        try: 
+        try:
             result = bisect(f, 0, 100)
         except ValueError as e:
             if str(e) != "f(a) and f(b) must have different signs":
@@ -139,59 +139,45 @@ class Beta(Cell):
         super(Beta, self).__init__("beta")
 
 
+def norm_data(data):
+    return (data-np.min(data))/(np.max(data)-np.min(data))
+
+
 class Alpha(Cell):
     def __init__(self):
         super(Alpha, self).__init__("alpha")
         self.beta_mitos = 1
-        camp_data = pathlib.Path(__file__).parent / "camp.txt"
+
+        cAMP_sAC_path = pathlib.Path(__file__).parent / "cAMP_sAC.txt"
+        self.cAMP_sAC_data = np.loadtxt(cAMP_sAC_path).T
+        self.cAMP_sAC_data[1] = norm_data(self.cAMP_sAC_data[1])
+
+        cAMP_tmAC_path = pathlib.Path(__file__).parent / "cAMP_tmAC.txt"
+        self.cAMP_tmAC_data = np.loadtxt(cAMP_tmAC_path).T
+        self.cAMP_tmAC_data[1] = norm_data(self.cAMP_tmAC_data[1])
+
         mesh_data = pathlib.Path(__file__).parent / "mesh.txt"
-        self.cAMP_data = np.loadtxt(camp_data).T
-        norm = self.cAMP_data[1]
-        norm = (norm-np.min(norm))/(np.max(norm)-np.min(norm))
-        self.cAMP_data[1] = norm
         self.mesh_data = np.loadtxt(mesh_data).T
         self.mesh_data[2] /= np.max(self.mesh_data[2])
 
     # --------------------------------- cAMP -------------------------------- #
-    def cAMP_interpolation(self, gKATP):
-        return interp1d(*self.cAMP_data)(gKATP)
+    def cAMP_sAC_interpolation(self, g):
+        try:
+            return interp1d(*self.cAMP_sAC_data)(g)
+        except ValueError:
+            return 0
+
+    def cAMP_tmAC_interpolation(self, g):
+        try:
+            return interp1d(*self.cAMP_tmAC_data)(g)
+        except ValueError:
+            return 0
 
     # ------------------------------- secretion ----------------------------- #
     def mesh_interpolation(self, gKATP, fcAMP):
-        assert np.array(gKATP >= 0).all()  and np.array(gKATP <= 0.4).all()
+        assert np.array(gKATP >= 0).all() and np.array(gKATP <= 0.4).all()
         assert np.array(fcAMP >= 0).all() and np.array(fcAMP <= 1).all()
         x, y, z = self.mesh_data
         sparse_points = np.stack([x, y], -1)
         result = griddata(sparse_points, z, (gKATP, fcAMP))
         return result
-
-    def RGS_Ca(self, gKATP):
-        before = self.mitos
-        self.mitos = 1
-        G = self.glucose_vec(gKATP)
-        self.mitos = before
-
-        # if G == None:
-        #     return 0 
-
-        G = np.nan_to_num(G)
-
-        Ca_max = 0.12
-        G_05 = 17
-        return Ca_max/(1 + np.exp(-0.3*(G-G_05)))
-
-    def RGS_Ca_vec(self, gKATP):
-        return np.vectorize(self.RGS_Ca)(gKATP)
-
-    def RGS_intrinsic(self, gKATP, fcAMP):
-        return self.mesh_interpolation(gKATP, fcAMP)+self.RGS_Ca_vec(gKATP)
-
-    def RGS_paracrine(self, G):
-        beta = Beta()
-        beta.mitos = self.beta_mitos
-        beta_gKATP = beta.g_K_ATP(G)
-        RIS = beta.RS(beta_gKATP)
-        return 1-RIS
-
-    def RGS(self, G, gKATP, cAMP):
-        return INTRINSIC*self.RGS_intrinsic(gKATP, cAMP)+PARACRINE*self.RGS_paracrine(G)
