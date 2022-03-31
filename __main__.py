@@ -23,7 +23,7 @@ def main():
         plot_results(AA)
     except IOError as e:
         print(e)
-        for a, res in enumerate(run_montefusco_parallel(alpha, G, AA)):
+        for a, res in run_montefusco_parallel(alpha, G, AA):
             results_path = pathlib.Path(__file__).parent / "results" / f"{int(a*100):03}%AA.txt"
             np.savetxt(results_path, res)
         plot_results(AA)
