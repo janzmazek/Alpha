@@ -4,9 +4,6 @@ import numpy as np
 from scipy.optimize import bisect
 from scipy.interpolate import interp1d, interp2d, griddata, Rbf
 
-PARACRINE = 0.23
-INTRINSIC = 1-PARACRINE
-
 
 class Cell(object):
     def __init__(self, type):
@@ -152,32 +149,9 @@ class Alpha(Cell):
         self.cAMP_sAC_data = np.loadtxt(cAMP_sAC_path).T
         self.cAMP_sAC_data[1] = norm_data(self.cAMP_sAC_data[1])
 
-        cAMP_tmAC_path = pathlib.Path(__file__).parent / "cAMP_tmAC.txt"
-        self.cAMP_tmAC_data = np.loadtxt(cAMP_tmAC_path).T
-        self.cAMP_tmAC_data[1] = norm_data(self.cAMP_tmAC_data[1])
-
-        mesh_data = pathlib.Path(__file__).parent / "mesh.txt"
-        self.mesh_data = np.loadtxt(mesh_data).T
-        self.mesh_data[2] /= np.max(self.mesh_data[2])
-
     # --------------------------------- cAMP -------------------------------- #
     def cAMP_sAC_interpolation(self, g):
         try:
             return interp1d(*self.cAMP_sAC_data)(g)
         except ValueError:
             return 0
-
-    def cAMP_tmAC_interpolation(self, g):
-        try:
-            return interp1d(*self.cAMP_tmAC_data)(g)
-        except ValueError:
-            return 0
-
-    # ------------------------------- secretion ----------------------------- #
-    def mesh_interpolation(self, gKATP, fcAMP):
-        assert np.array(gKATP >= 0).all() and np.array(gKATP <= 0.4).all()
-        assert np.array(fcAMP >= 0).all() and np.array(fcAMP <= 1).all()
-        x, y, z = self.mesh_data
-        sparse_points = np.stack([x, y], -1)
-        result = griddata(sparse_points, z, (gKATP, fcAMP))
-        return result
