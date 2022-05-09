@@ -15,45 +15,55 @@ class Cell(object):
                 print(exc)
         self.par = par
         self.mitos = 1
+        self.anaerobic = 1
 
     # GLYCOLYSIS
-    def J_G6P(self, G):
-        J_max, K_m = self.par["J_max"], self.par["K_m"]
-        return J_max * G**2 / (K_m**2 + G**2)
+    def J_GK(self, G):
+        J_max_GK, K_m_GK = self.par["J_max"], self.par["K_m"]
+        return J_max_GK * G**2 / (K_m_GK**2 + G**2)
 
-    def J_ATP_gly(self, G):
-        return 2*self.J_G6P(G)
+    def J_gly(self, G):
+        return 2*self.J_GK(G)
+
+    def J_lac(self, G):
+        p_L = self.par["p_L"]
+        return p_L*self.J_gly(G)
 
     def J_NADH_gly(self, G):
-        return 2*self.J_G6P(G)
-
-    def J_pyr(self, G):
-        return 2*self.J_G6P(G)
+        return self.J_gly(G) - self.J_lac(G)
 
     def J_ATP_NADH_gly(self, G):
-        p_L = self.par["p_L"]
-        return 1.5*(self.J_NADH_gly(G)-p_L*self.J_pyr(G))
+        return 1.5*self.J_NADH_gly(G)
+
+    def J_ATP_gly(self, G):
+        return self.anaerobic*self.J_gly(G)
+
+    def J_pyr(self, G):
+        return self.J_gly(G) - self.J_lac(G)
 
     # TCA CYCLE
+
+    def J_anaplerosis(self, G):
+        p_TCA = self.par["p_TCA"]
+        return (1-p_TCA)*self.J_pyr(G)
+
     def J_NADH_pyr(self, G):
-        p_L, p_TCA = self.par["p_L"], self.par["p_TCA"]
-        return 5*p_TCA*(1-p_L)*self.J_pyr(G)
+        return 5*(self.J_pyr(G)-self.J_anaplerosis(G))
 
     def J_ATP_NADH_pyr(self, G):
         return 2.5*self.J_NADH_pyr(G)
 
     # OXYGEN INPUT
     def J_O2_G(self, G):
-        p_L = self.par["p_L"]
-        return 0.5*(self.J_NADH_pyr(G)+self.J_NADH_gly(G)-p_L*self.J_pyr(G))
+        return 0.5*(self.J_NADH_pyr(G)+self.J_NADH_gly(G))
 
     def J_O2(self, G):
         J_O2_0, k_O2 = self.par["J_O2_0"], self.par["k_O2"]
-        alpha = k_O2*self.J_G6P(G) + J_O2_0
+        alpha = k_O2*self.J_GK(G) + J_O2_0
 
         J_O2_1, K_m_O2 = self.par["J_O2_1"], self.par["K_m_O2"]
         n_O2 = self.par["n_O2"]
-        beta = J_O2_1*self.J_G6P(G)**n_O2/(K_m_O2**n_O2+self.J_G6P(G)**n_O2)
+        beta = J_O2_1*self.J_GK(G)**n_O2/(K_m_O2**n_O2+self.J_GK(G)**n_O2)
         return alpha + beta
 
     # BETA-OXIDATION
@@ -61,7 +71,7 @@ class Cell(object):
         return 2*(self.J_O2(G)-self.J_O2_G(G))
 
     def J_ATP_NADH_FFA(self, G):
-        return 2.3*self.J_NADH_FFA(G)  # !spremenjeno iz 2.5!
+        return 2.5*self.J_NADH_FFA(G)  # !spremenjeno iz 2.5! 2.3
 
     # OXIDATIVE ATP PRODUCTION
     def J_ATP_ox(self, G):

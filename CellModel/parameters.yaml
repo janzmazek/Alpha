@@ -10,8 +10,8 @@ alpha:
   k_O2: -0.2
   A_tot: 4000
   ag_K_ATP: 54
-  k_ATPase: 175  # !spremenjeno iz 135!
-  K_m_ATPase: 4000  # !spremenjeno iz 2000!
+  k_ATPase: 135  # !spremenjeno iz 135! 175
+  K_m_ATPase: 2000  # !spremenjeno iz 2000! 4000
   g_s_2: 0.22
   g_K_ATP_ms: 0.27
   n_s: 10

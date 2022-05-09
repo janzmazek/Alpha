@@ -1,5 +1,5 @@
-from metabolism.metabolism import Alpha
-from secretion.alpha.secretion import run_montefusco_parallel
+from CellModel.metabolism import Alpha
+from CellModel.secretion import run_montefusco_parallel
 import numpy as np
 import matplotlib.pyplot as plt
 import pathlib

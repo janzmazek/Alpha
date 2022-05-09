@@ -35,7 +35,7 @@ def montefusco(alpha, g, cAMP, AA, return_dict, first_iteration=True):
     return_dict[g] = (GS, V_min, V_max)
 
 
-def run_montefusco_parallel(alpha, glucose, amino_acids):
+def run_montefusco_parallel(alpha, glucose, amino_acids, signaling=True):
     """
     parameters: 
     - alpha object
@@ -54,7 +54,7 @@ def run_montefusco_parallel(alpha, glucose, amino_acids):
 
         # Start multiprocesses (iteration 1)
         for g in glucose:
-            cAMP = 0.75*alpha.cAMP_sAC_interpolation(g)
+            cAMP = 0.75*alpha.cAMP_sAC_interpolation(g) if signaling else 1
             pool.apply_async(montefusco, args=(alpha, g, cAMP, AA, return_dict))
 
         # Wait for multiprocesses to finish (iteration 1)
